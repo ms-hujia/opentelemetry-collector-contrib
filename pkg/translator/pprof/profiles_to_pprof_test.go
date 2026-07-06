@@ -180,7 +180,6 @@ func TestSampleValueTimestampShapes(t *testing.T) {
 
 func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	t.Run("string labels from multiple profiles merged", func(t *testing.T) {
-
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "alice"}}}, // 1: user=alice
@@ -199,7 +198,6 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	})
 
 	t.Run("num labels with units from multiple profiles", func(t *testing.T) {
-
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
@@ -219,7 +217,6 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	})
 
 	t.Run("conflicting num units across profiles returns error", func(t *testing.T) {
-
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
@@ -234,7 +231,6 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	})
 
 	t.Run("string labels same key different values are merged", func(t *testing.T) {
-
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "alice"}}}, // 1: user=alice
@@ -253,7 +249,6 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	})
 
 	t.Run("num labels same key different values are merged", func(t *testing.T) {
-
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
