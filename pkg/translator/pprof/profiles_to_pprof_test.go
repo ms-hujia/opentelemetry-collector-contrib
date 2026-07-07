@@ -216,7 +216,7 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 		require.Equal(t, []string{"KB"}, result.Sample[0].NumUnit["limit"])
 	})
 
-	t.Run("conflicting num units across profiles returns error", func(t *testing.T) {
+	t.Run("conflicting num units across profiles returns error 1", func(t *testing.T) {
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
@@ -227,10 +227,38 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 
 		_, err := ConvertPprofileToPprof(&p)
 
-		require.ErrorContains(t, err, "inconsistent num unit definitions across profiles")
+		require.EqualError(t, err, "inconsistent attribute unit definitions across profiles")
 	})
 
-	t.Run("string labels same key different values are merged", func(t *testing.T) {
+	t.Run("conflicting num units across profiles returns error 2", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}},                  // 2: limit=789
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "inconsistent attribute unit definitions across profiles")
+	})
+
+	t.Run("conflicting num units across profiles returns error 3", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}},                  // 1: limit=789
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 2: limit=789KB
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "inconsistent attribute unit definitions across profiles")
+	})
+
+	t.Run("conflicting str attributes across profiles returns error", func(t *testing.T) {
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
 			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "alice"}}}, // 1: user=alice
@@ -239,33 +267,23 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 
 		p := buildProfilesWithAttributes(t, attributes)
 
-		result, err := ConvertPprofileToPprof(&p)
+		_, err := ConvertPprofileToPprof(&p)
 
-		require.NoError(t, err)
-		require.NoError(t, result.CheckValid())
-		require.Len(t, result.Sample, 1)
-		// Different values for the same key across profiles must both be present.
-		require.ElementsMatch(t, []string{"alice", "bob"}, result.Sample[0].Label["user"])
+		require.EqualError(t, err, "inconsistent attribute str values across profiles")
 	})
 
-	t.Run("num labels same key different values are merged", func(t *testing.T) {
+	t.Run("conflicting int attributes across profiles returns error", func(t *testing.T) {
 		attributes := []*otlpprofiles.KeyValueAndUnit{
 			{}, // 0: zero-value sentinel
-			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 6}, // 1: limit=789KB
-			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 123}}},                  // 2: limit=123
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}}, // 1: limit=789
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 123}}}, // 2: limit=123
 		}
 
 		p := buildProfilesWithAttributes(t, attributes)
 
-		result, err := ConvertPprofileToPprof(&p)
+		_, err := ConvertPprofileToPprof(&p)
 
-		require.NoError(t, err)
-		require.NoError(t, result.CheckValid())
-		require.Len(t, result.Sample, 1)
-		// Different numeric values for the same key across profiles must both be present.
-		require.ElementsMatch(t, []int64{789, 123}, result.Sample[0].NumLabel["limit"])
-		// NumUnit length must match NumLabel length: one "KB" entry per value.
-		require.Equal(t, []string{"KB", "KB"}, result.Sample[0].NumUnit["limit"])
+		require.EqualError(t, err, "inconsistent attribute int values across profiles")
 	})
 }
 

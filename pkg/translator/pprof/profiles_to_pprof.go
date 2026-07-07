@@ -110,11 +110,9 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 		// Profiles uses the first profile as default. Therefore, swap first and last.
 		// All profiles must produce the same number of observations for a given sample.
 		var obsCount int
-		// Multiple values for the same key is possible, while strongly discouraged.
-		// Multiple occurrence of the same key value pair will be merged.
-		strLabels := make(map[string]map[string]bool)
-		numLabels := make(map[string]map[int64]bool)
-		// For unit, we don't allow it to be inconsistent since the slice needs to be of the same length with num labels.
+		// Only attribute with same key, value and unit can be merged.
+		strLabels := make(map[string]string)
+		numLabels := make(map[string]int64)
 		numUnits := make(map[string]string)
 		for i := range numProfiles {
 			// Swap first and last: first OTel profile becomes last pprof sample type
@@ -148,35 +146,63 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 				key := src.Dictionary().StringTable().At(int(attr.KeyStrindex()))
 				switch attr.Value().Type() {
 				case pcommon.ValueTypeStr:
-					_, ok := strLabels[key]
-					if !ok {
-						strLabels[key] = make(map[string]bool)
+					value := attr.Value().Str()
+					v, ok := strLabels[key]
+					if ok {
+						if v != value {
+							return nil, errors.New("inconsistent attribute str values across profiles")
+						}
+					} else {
+						strLabels[key] = value
 					}
-					strLabels[key][attr.Value().Str()] = true
 				case pcommon.ValueTypeInt:
-					_, ok := numLabels[key]
-					if !ok {
-						numLabels[key] = make(map[int64]bool)
-					}
-					numLabels[key][attr.Value().Int()] = true
-					// Add num unit if existing.
-					if attr.UnitStrindex() != 0 {
-						unit := src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
-						v, ok := numUnits[key]
-						if ok {
-							if unit != v {
-								return nil, errors.New("inconsistent num unit definitions across profiles")
+					value := attr.Value().Int()
+					v, ok := numLabels[key]
+					if ok {
+						if v != value {
+							return nil, errors.New("inconsistent attribute int values across profiles")
+						}
+						if attr.UnitStrindex() != 0 {
+							unit := src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
+							v, ok := numUnits[key]
+							if !ok || v != unit {
+								return nil, errors.New("inconsistent attribute unit definitions across profiles")
 							}
 						} else {
-							numUnits[key] = unit
+							_, ok := numUnits[key]
+							if ok {
+								return nil, errors.New("inconsistent attribute unit definitions across profiles")
+							}
+						}
+					} else {
+						numLabels[key] = value
+						if attr.UnitStrindex() != 0 {
+							unit := src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
+							v, ok := numUnits[key]
+							if ok {
+								if unit != v {
+									return nil, errors.New("inconsistent attribute unit definitions across profiles")
+								}
+							} else {
+								numUnits[key] = unit
+							}
+						} else {
+							_, ok := numUnits[key]
+							if ok {
+								return nil, errors.New("inconsistent attribute unit definitions across profiles")
+							}
 						}
 					}
 				case pcommon.ValueTypeBool:
-					_, ok := strLabels[key]
-					if !ok {
-						strLabels[key] = make(map[string]bool)
+					value := attr.Value().AsString()
+					v, ok := strLabels[key]
+					if ok {
+						if v != value {
+							return nil, errors.New("inconsistent attribute str values across profiles")
+						}
+					} else {
+						strLabels[key] = value
 					}
-					strLabels[key][attr.Value().AsString()] = true
 				default:
 					// All other types are dropped due to incompatibility.
 				}
@@ -237,55 +263,19 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			if len(strLabels) > 0 {
 				pprofSample.Label = make(map[string][]string, len(strLabels))
 				for k, v := range strLabels {
-					pprofSample.Label[k] = make([]string, 0, len(v))
-					for vv := range v {
-						pprofSample.Label[k] = append(pprofSample.Label[k], vv)
-					}
+					pprofSample.Label[k] = []string{v}
 				}
 			}
 			if len(numLabels) > 0 {
 				pprofSample.NumLabel = make(map[string][]int64, len(numLabels))
 				for k, v := range numLabels {
-					pprofSample.NumLabel[k] = make([]int64, 0, len(v))
-					for vv := range v {
-						pprofSample.NumLabel[k] = append(pprofSample.NumLabel[k], vv)
-					}
+					pprofSample.NumLabel[k] = []int64{v}
 				}
 			}
 			if len(numUnits) > 0 {
 				pprofSample.NumUnit = make(map[string][]string, len(numUnits))
 				for k, v := range numUnits {
-					pprofSample.NumUnit[k] = make([]string, len(numLabels[k]))
-					for i := range len(numLabels[k]) {
-						pprofSample.NumUnit[k][i] = v
-					}
-				}
-			}
-			if len(strLabels) > 0 {
-				pprofSample.Label = make(map[string][]string, len(strLabels))
-				for k, v := range strLabels {
-					pprofSample.Label[k] = make([]string, 0, len(v))
-					for vv := range v {
-						pprofSample.Label[k] = append(pprofSample.Label[k], vv)
-					}
-				}
-			}
-			if len(numLabels) > 0 {
-				pprofSample.NumLabel = make(map[string][]int64, len(numLabels))
-				for k, v := range numLabels {
-					pprofSample.NumLabel[k] = make([]int64, 0, len(v))
-					for vv := range v {
-						pprofSample.NumLabel[k] = append(pprofSample.NumLabel[k], vv)
-					}
-				}
-			}
-			if len(numUnits) > 0 {
-				pprofSample.NumUnit = make(map[string][]string, len(numUnits))
-				for k, v := range numUnits {
-					pprofSample.NumUnit[k] = make([]string, len(numLabels[k]))
-					for i := range len(numLabels[k]) {
-						pprofSample.NumUnit[k][i] = v
-					}
+					pprofSample.NumUnit[k] = []string{v}
 				}
 			}
 			dst.Sample = append(dst.Sample, &pprofSample)
