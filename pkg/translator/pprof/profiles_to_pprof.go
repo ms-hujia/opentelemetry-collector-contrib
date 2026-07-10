@@ -18,6 +18,21 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
+type valueKind int
+
+const (
+	unsupported valueKind = 0
+	strKind     valueKind = 1
+	numKind     valueKind = 2
+)
+
+type pprofLabelValue struct {
+	kind valueKind
+	str  string
+	num  int64
+	unit string
+}
+
 // errNotFound is returned if something requested is not available
 var errNotFound = errors.New("not found")
 
@@ -111,9 +126,10 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 		// All profiles must produce the same number of observations for a given sample.
 		var obsCount int
 		// Only attribute with same key, value and unit can be merged.
-		strLabels := make(map[string]string)
-		numLabels := make(map[string]int64)
-		numUnits := make(map[string]string)
+		labels := make(map[string]pprofLabelValue)
+		strLabelCnt := 0
+		numLabelCnt := 0
+		numUnitCnt := 0
 		for i := range numProfiles {
 			// Swap first and last: first OTel profile becomes last pprof sample type
 			var mappedIdx int
@@ -144,67 +160,68 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			for _, attrIdx := range otlpSample.AttributeIndices().All() {
 				attr := src.Dictionary().AttributeTable().At(int(attrIdx))
 				key := src.Dictionary().StringTable().At(int(attr.KeyStrindex()))
+				kind := unsupported
+				strValue := ""
+				numValue := int64(0)
+				unit := ""
 				switch attr.Value().Type() {
 				case pcommon.ValueTypeStr:
-					value := attr.Value().Str()
-					v, ok := strLabels[key]
-					if ok {
-						if v != value {
-							return nil, errors.New("inconsistent attribute str values across profiles")
-						}
-					} else {
-						strLabels[key] = value
-					}
+					kind = strKind
+					strValue = attr.Value().Str()
 				case pcommon.ValueTypeInt:
-					value := attr.Value().Int()
-					v, ok := numLabels[key]
-					if ok {
-						if v != value {
-							return nil, errors.New("inconsistent attribute int values across profiles")
-						}
-						if attr.UnitStrindex() != 0 {
-							unit := src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
-							v, ok := numUnits[key]
-							if !ok || v != unit {
-								return nil, errors.New("inconsistent attribute unit definitions across profiles")
-							}
-						} else {
-							_, ok := numUnits[key]
-							if ok {
-								return nil, errors.New("inconsistent attribute unit definitions across profiles")
-							}
-						}
-					} else {
-						numLabels[key] = value
-						if attr.UnitStrindex() != 0 {
-							unit := src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
-							v, ok := numUnits[key]
-							if ok {
-								if unit != v {
-									return nil, errors.New("inconsistent attribute unit definitions across profiles")
-								}
-							} else {
-								numUnits[key] = unit
-							}
-						} else {
-							_, ok := numUnits[key]
-							if ok {
-								return nil, errors.New("inconsistent attribute unit definitions across profiles")
-							}
-						}
+					kind = numKind
+					numValue = attr.Value().Int()
+					if attr.UnitStrindex() != 0 {
+						unit = src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
 					}
 				case pcommon.ValueTypeBool:
-					value := attr.Value().AsString()
-					v, ok := strLabels[key]
+					kind = strKind
+					strValue = attr.Value().AsString()
+				default:
+					// All other types are dropped due to incompatibility.
+				}
+				switch kind {
+				case strKind:
+					v, ok := labels[key]
 					if ok {
-						if v != value {
+						if v.kind != strKind {
+							return nil, errors.New("inconsistent attribute value types across profiles")
+						}
+						if v.str != strValue {
 							return nil, errors.New("inconsistent attribute str values across profiles")
 						}
 					} else {
-						strLabels[key] = value
+						labels[key] = pprofLabelValue{
+							kind: strKind,
+							str:  strValue,
+						}
+						strLabelCnt++
+					}
+				case numKind:
+					v, ok := labels[key]
+					if ok {
+						if v.kind != numKind {
+							return nil, errors.New("inconsistent attribute value types across profiles")
+						}
+						if v.num != numValue {
+							return nil, errors.New("inconsistent attribute int values across profiles")
+						}
+						if v.unit != unit {
+							return nil, errors.New("inconsistent attribute unit definitions across profiles")
+						}
+					} else {
+						labels[key] = pprofLabelValue{
+							kind: numKind,
+							num:  numValue,
+							unit: unit,
+						}
+						numLabelCnt++
+						if unit != "" {
+							numUnitCnt++
+						}
 					}
 				default:
-					// All other types are dropped due to incompatibility.
+					// Unsupported attribute value type goes here.
 				}
 			}
 		}
@@ -260,22 +277,26 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			for profIdx := range numProfiles {
 				pprofSample.Value[profIdx] = valuesByProfile[profIdx][obsIdx]
 			}
-			if len(strLabels) > 0 {
-				pprofSample.Label = make(map[string][]string, len(strLabels))
-				for k, v := range strLabels {
-					pprofSample.Label[k] = []string{v}
+			if len(labels) > 0 {
+				if strLabelCnt > 0 {
+					pprofSample.Label = make(map[string][]string, strLabelCnt)
 				}
-			}
-			if len(numLabels) > 0 {
-				pprofSample.NumLabel = make(map[string][]int64, len(numLabels))
-				for k, v := range numLabels {
-					pprofSample.NumLabel[k] = []int64{v}
+				if numLabelCnt > 0 {
+					pprofSample.NumLabel = make(map[string][]int64, numLabelCnt)
 				}
-			}
-			if len(numUnits) > 0 {
-				pprofSample.NumUnit = make(map[string][]string, len(numUnits))
-				for k, v := range numUnits {
-					pprofSample.NumUnit[k] = []string{v}
+				if numUnitCnt > 0 {
+					pprofSample.NumUnit = make(map[string][]string, numUnitCnt)
+				}
+				for k, v := range labels {
+					switch v.kind {
+					case strKind:
+						pprofSample.Label[k] = []string{v.str}
+					case numKind:
+						pprofSample.NumLabel[k] = []int64{v.num}
+						if v.unit != "" {
+							pprofSample.NumUnit[k] = []string{v.unit}
+						}
+					}
 				}
 			}
 			dst.Sample = append(dst.Sample, &pprofSample)

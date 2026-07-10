@@ -285,6 +285,34 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 
 		require.EqualError(t, err, "inconsistent attribute int values across profiles")
 	})
+
+	t.Run("conflicting value types across profiles returns error 1", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "789MB"}}},        // 1: limit='789MB'
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 7}, // 2: limit=789MB
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "inconsistent attribute value types across profiles")
+	})
+
+	t.Run("conflicting value types across profiles returns error 2", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: 789}}, UnitStrindex: 7}, // 2: limit=789MB
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: "789MB"}}},        // 1: limit='789MB'
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "inconsistent attribute value types across profiles")
+	})
 }
 
 func buildProfilesWithAttributes(t *testing.T, attributes []*otlpprofiles.KeyValueAndUnit) pprofile.Profiles {
