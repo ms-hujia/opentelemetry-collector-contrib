@@ -33,6 +33,13 @@ type pprofLabelValue struct {
 	unit string
 }
 
+type pprofLabelMerger struct {
+	labels      map[string]pprofLabelValue
+	strLabelCnt int
+	numLabelCnt int
+	numUnitCnt  int
+}
+
 // errNotFound is returned if something requested is not available
 var errNotFound = errors.New("not found")
 
@@ -126,10 +133,9 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 		// All profiles must produce the same number of observations for a given sample.
 		var obsCount int
 		// Only attribute with same key, value and unit can be merged.
-		labels := make(map[string]pprofLabelValue)
-		strLabelCnt := 0
-		numLabelCnt := 0
-		numUnitCnt := 0
+		labelMerger := &pprofLabelMerger{
+			labels: make(map[string]pprofLabelValue),
+		}
 		for i := range numProfiles {
 			// Swap first and last: first OTel profile becomes last pprof sample type
 			var mappedIdx int
@@ -160,68 +166,31 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			for _, attrIdx := range otlpSample.AttributeIndices().All() {
 				attr := src.Dictionary().AttributeTable().At(int(attrIdx))
 				key := src.Dictionary().StringTable().At(int(attr.KeyStrindex()))
-				kind := unsupported
-				strValue := ""
-				numValue := int64(0)
-				unit := ""
 				switch attr.Value().Type() {
 				case pcommon.ValueTypeStr:
-					kind = strKind
-					strValue = attr.Value().Str()
+					strValue := attr.Value().Str()
+					err := labelMerger.mergeStrLabel(key, strValue)
+					if err != nil {
+						return nil, err
+					}
 				case pcommon.ValueTypeInt:
-					kind = numKind
-					numValue = attr.Value().Int()
+					unit := ""
+					numValue := attr.Value().Int()
 					if attr.UnitStrindex() != 0 {
 						unit = src.Dictionary().StringTable().At(int(attr.UnitStrindex()))
 					}
+					err := labelMerger.mergeNumLabel(key, numValue, unit)
+					if err != nil {
+						return nil, err
+					}
 				case pcommon.ValueTypeBool:
-					kind = strKind
-					strValue = attr.Value().AsString()
+					strValue := attr.Value().AsString()
+					err := labelMerger.mergeStrLabel(key, strValue)
+					if err != nil {
+						return nil, err
+					}
 				default:
 					// All other types are dropped due to incompatibility.
-				}
-				switch kind {
-				case strKind:
-					v, ok := labels[key]
-					if ok {
-						if v.kind != strKind {
-							return nil, errors.New("inconsistent attribute value types across profiles")
-						}
-						if v.str != strValue {
-							return nil, errors.New("inconsistent attribute str values across profiles")
-						}
-					} else {
-						labels[key] = pprofLabelValue{
-							kind: strKind,
-							str:  strValue,
-						}
-						strLabelCnt++
-					}
-				case numKind:
-					v, ok := labels[key]
-					if ok {
-						if v.kind != numKind {
-							return nil, errors.New("inconsistent attribute value types across profiles")
-						}
-						if v.num != numValue {
-							return nil, errors.New("inconsistent attribute int values across profiles")
-						}
-						if v.unit != unit {
-							return nil, errors.New("inconsistent attribute unit definitions across profiles")
-						}
-					} else {
-						labels[key] = pprofLabelValue{
-							kind: numKind,
-							num:  numValue,
-							unit: unit,
-						}
-						numLabelCnt++
-						if unit != "" {
-							numUnitCnt++
-						}
-					}
-				default:
-					// Unsupported attribute value type goes here.
 				}
 			}
 		}
@@ -277,28 +246,7 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			for profIdx := range numProfiles {
 				pprofSample.Value[profIdx] = valuesByProfile[profIdx][obsIdx]
 			}
-			if len(labels) > 0 {
-				if strLabelCnt > 0 {
-					pprofSample.Label = make(map[string][]string, strLabelCnt)
-				}
-				if numLabelCnt > 0 {
-					pprofSample.NumLabel = make(map[string][]int64, numLabelCnt)
-				}
-				if numUnitCnt > 0 {
-					pprofSample.NumUnit = make(map[string][]string, numUnitCnt)
-				}
-				for k, v := range labels {
-					switch v.kind {
-					case strKind:
-						pprofSample.Label[k] = []string{v.str}
-					case numKind:
-						pprofSample.NumLabel[k] = []int64{v.num}
-						if v.unit != "" {
-							pprofSample.NumUnit[k] = []string{v.unit}
-						}
-					}
-				}
-			}
+			labelMerger.assignAll(&pprofSample)
 			dst.Sample = append(dst.Sample, &pprofSample)
 		}
 	}
@@ -671,4 +619,74 @@ func populateLocation(dst *profile.Profile, locationMap map[uint64]*profile.Loca
 	locationMap[lHash] = pprofL
 
 	return pprofL
+}
+
+func (p *pprofLabelMerger) mergeStrLabel(key string, strValue string) error {
+	v, ok := p.labels[key]
+	if ok {
+		if v.kind != strKind {
+			return errors.New("inconsistent attribute value types across profiles")
+		}
+		if v.str != strValue {
+			return errors.New("inconsistent attribute str values across profiles")
+		}
+	} else {
+		p.labels[key] = pprofLabelValue{
+			kind: strKind,
+			str:  strValue,
+		}
+		p.strLabelCnt++
+	}
+	return nil
+}
+
+func (p *pprofLabelMerger) mergeNumLabel(key string, numValue int64, unit string) error {
+	v, ok := p.labels[key]
+	if ok {
+		if v.kind != numKind {
+			return errors.New("inconsistent attribute value types across profiles")
+		}
+		if v.num != numValue {
+			return errors.New("inconsistent attribute int values across profiles")
+		}
+		if v.unit != unit {
+			return errors.New("inconsistent attribute unit definitions across profiles")
+		}
+	} else {
+		p.labels[key] = pprofLabelValue{
+			kind: numKind,
+			num:  numValue,
+			unit: unit,
+		}
+		p.numLabelCnt++
+		if unit != "" {
+			p.numUnitCnt++
+		}
+	}
+	return nil
+}
+
+func (p *pprofLabelMerger) assignAll(pprofSample *profile.Sample) {
+	if len(p.labels) > 0 {
+		if p.strLabelCnt > 0 {
+			pprofSample.Label = make(map[string][]string, p.strLabelCnt)
+		}
+		if p.numLabelCnt > 0 {
+			pprofSample.NumLabel = make(map[string][]int64, p.numLabelCnt)
+		}
+		if p.numUnitCnt > 0 {
+			pprofSample.NumUnit = make(map[string][]string, p.numUnitCnt)
+		}
+		for k, v := range p.labels {
+			switch v.kind {
+			case strKind:
+				pprofSample.Label[k] = []string{v.str}
+			case numKind:
+				pprofSample.NumLabel[k] = []int64{v.num}
+				if v.unit != "" {
+					pprofSample.NumUnit[k] = []string{v.unit}
+				}
+			}
+		}
+	}
 }
