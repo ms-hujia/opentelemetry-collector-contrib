@@ -622,7 +622,7 @@ func populateLocation(dst *profile.Profile, locationMap map[uint64]*profile.Loca
 	return pprofL
 }
 
-func (p *pprofLabelMerger) mergeStrLabel(key string, strValue string) error {
+func (p *pprofLabelMerger) mergeStrLabel(key, strValue string) error {
 	v, ok := p.labels[key]
 	if ok {
 		if v.kind != strKind {
