@@ -166,7 +166,8 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 			for _, attrIdx := range otlpSample.AttributeIndices().All() {
 				attr := src.Dictionary().AttributeTable().At(int(attrIdx))
 				key := src.Dictionary().StringTable().At(int(attr.KeyStrindex()))
-				switch attr.Value().Type() {
+				t := attr.Value().Type()
+				switch t {
 				case pcommon.ValueTypeStr:
 					strValue := attr.Value().Str()
 					err := labelMerger.mergeStrLabel(key, strValue)
@@ -190,7 +191,7 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 						return nil, err
 					}
 				default:
-					// All other types are dropped due to incompatibility.
+					return nil, fmt.Errorf("incompatible sample attribute type: %s", t.String())
 				}
 			}
 		}

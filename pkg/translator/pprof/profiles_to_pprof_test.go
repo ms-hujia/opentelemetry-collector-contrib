@@ -315,6 +315,82 @@ func TestSampleLabelsWithMultipleProfiles(t *testing.T) {
 	})
 }
 
+func TestSampleLabelsWithDifferentValueTypes(t *testing.T) {
+	t.Run("attribute type bool parsed to string", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_BoolValue{BoolValue: true}}},  // 1: user=true (bool)
+			{KeyStrindex: 5, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_BoolValue{BoolValue: false}}}, // 2: limit=false (bool)
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		result, err := ConvertPprofileToPprof(&p)
+
+		require.NoError(t, err)
+		require.NoError(t, result.CheckValid())
+		require.Len(t, result.Sample, 1)
+		require.Equal(t, []string{"true"}, result.Sample[0].Label["user"])
+		require.Equal(t, []string{"false"}, result.Sample[0].Label["limit"])
+	})
+
+	t.Run("incompatible attribute type double returns error", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_DoubleValue{DoubleValue: 3.14}}}, // 1: user=3.14 (double)
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_DoubleValue{DoubleValue: 3.14}}}, // 2: user=3.14 (double)
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "incompatible sample attribute type: Double")
+	})
+
+	t.Run("incompatible attribute type map returns error", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_KvlistValue{KvlistValue: &commonv1.KeyValueList{}}}}, // 1: user={} (map)
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_KvlistValue{KvlistValue: &commonv1.KeyValueList{}}}}, // 2: user={} (map)
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "incompatible sample attribute type: Map")
+	})
+
+	t.Run("incompatible attribute type slice returns error", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_ArrayValue{ArrayValue: &commonv1.ArrayValue{}}}}, // 1: user=[] (slice)
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_ArrayValue{ArrayValue: &commonv1.ArrayValue{}}}}, // 2: user=[] (slice)
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "incompatible sample attribute type: Slice")
+	})
+
+	t.Run("incompatible attribute type bytes returns error", func(t *testing.T) {
+		attributes := []*otlpprofiles.KeyValueAndUnit{
+			{}, // 0: zero-value sentinel
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_BytesValue{BytesValue: []byte{0x01}}}}, // 1: user=0x01 (bytes)
+			{KeyStrindex: 4, Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_BytesValue{BytesValue: []byte{0x01}}}}, // 2: user=0x01 (bytes)
+		}
+
+		p := buildProfilesWithAttributes(t, attributes)
+
+		_, err := ConvertPprofileToPprof(&p)
+
+		require.EqualError(t, err, "incompatible sample attribute type: Bytes")
+	})
+}
+
 func buildProfilesWithAttributes(t *testing.T, attributes []*otlpprofiles.KeyValueAndUnit) pprofile.Profiles {
 	dict := &otlpprofiles.ProfilesDictionary{
 		//                       0    1     2              3       4       5        6.    7
