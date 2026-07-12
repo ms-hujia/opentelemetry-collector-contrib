@@ -132,7 +132,7 @@ func ConvertPprofileToPprof(src *pprofile.Profiles) (*profile.Profile, error) {
 		// Profiles uses the first profile as default. Therefore, swap first and last.
 		// All profiles must produce the same number of observations for a given sample.
 		var obsCount int
-		// Only attribute with same key, value and unit can be merged.
+		// Only unique attributes (key, value and unit) will be transformed.
 		labelMerger := &pprofLabelMerger{
 			labels: make(map[string]pprofLabelValue),
 		}
